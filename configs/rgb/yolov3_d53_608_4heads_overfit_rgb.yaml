@@ -1,0 +1,364 @@
+
+###############################################################
+#Config Description:
+#map : out_of_lable to vehicle
+#leaving us with 4 categories [person, vehicle, two-wheeled, dilemma-zone]
+#treating only dilemma-zone as iscrowd
+#filtering dilemma_zone from class ClassBalancedDataset
+#modifying self.CLASSES: [person, vehicle, two-wheeled]
+#modifyed num_classes: 3
+################################################################
+
+checkpoint_config:
+  interval: 1
+
+custom_hooks:
+  - type: NumClassCheckHook
+
+dist_params:
+  backend: nccl
+
+log_level: INFO
+
+load_from: ~
+resume_from: ~
+categories: !!python/tuple [person, vehicle, two-wheeled]
+
+# disable opencv multithreading to avoid system being overloaded
+opencv_num_threads: 0
+# set multiprocess start method as `fork` to speed up the training
+mp_start_method: fork
+
+work_dir: ~
+workflow: [!!python/tuple [train, 1], !!python/tuple [val, 1]]  # 1 epoch for training and 1 epoch for validation
+
+log_config:
+    interval: 50
+    hooks:
+      - type: TextLoggerHook
+      - type: AllegroAiLLoggerHook
+
+# model settings
+model:
+  type: YOLOV3
+  backbone:
+      type: Darknet
+      depth: 53
+      out_indices: !!python/tuple [2, 3, 4, 5]
+      init_cfg: ~
+  neck:
+    type: YOLOV3Neck
+    num_scales: 4
+    in_channels: [1024, 512, 256, 128]
+    out_channels: [512, 256, 128, 64]
+  bbox_head:
+    type: YOLOV3Head
+    num_classes: 3
+    in_channels: [512, 256, 128, 64]
+    out_channels: [1024, 512, 256, 128]
+    anchor_generator:
+      type: YOLOAnchorGenerator
+      base_sizes:
+        - [!!python/tuple [43, 99], !!python/tuple [99, 50], !!python/tuple [56, 142], !!python/tuple [162, 96]]
+        - [!!python/tuple [52, 24], !!python/tuple [50, 38], !!python/tuple [27, 69], !!python/tuple [81, 34]]
+        - [!!python/tuple [35, 16], !!python/tuple [16, 36], !!python/tuple [29, 28], !!python/tuple [20, 49]]
+        - [!!python/tuple [12, 12], !!python/tuple [10, 21], !!python/tuple [20, 16], !!python/tuple [12, 29]]
+      strides: [32, 16, 8, 4]
+    bbox_coder:
+      type: YOLOBBoxCoder
+    featmap_strides: [32, 16, 8, 4]
+    loss_conf:
+      type: CrossEntropyLoss
+      use_sigmoid: True
+      loss_weight: 1.0
+      reduction: sum
+      avg_non_ignore: ~
+      ignore_index: ~
+    loss_cls:
+      type: CrossEntropyLoss
+      class_weight: ~
+      use_sigmoid: True
+      loss_weight: 1.0
+      reduction: sum
+      avg_non_ignore: ~
+      ignore_index: ~
+    loss_xy:
+      type: CrossEntropyLoss
+      use_sigmoid: True
+      loss_weight: 2.0
+      reduction: sum
+      avg_non_ignore: ~
+      ignore_index: ~
+    loss_wh:
+      type: MSELoss
+      loss_weight: 2.0
+      reduction: sum
+  train_cfg:
+    assigner:
+      type: GridAssigner
+      pos_iou_thr: 0.5
+      neg_iou_thr: 0.5
+      min_pos_iou: 0
+  test_cfg:
+    nms_pre: 1000
+    min_bbox_size: 0
+    score_thr: 0.05
+    conf_thr: 0.005
+    nms:
+      type: nms
+      iou_threshold: 0.45
+    max_per_img: 100
+
+data:
+  samples_per_gpu: 4
+  workers_per_gpu: 4
+  train:
+    type: ClassBalancedDataset  # 'RepeatDataset',  # use RepeatDataset to speed up training
+    oversample_thr: 0.5  # number of minor category annotations / total number of images # times: 1,
+    dataset:
+      type: AllegroDataset
+      CLASSES: !!python/tuple [person, vehicle, two-wheeled, out_of_lable, dilemma_zone]
+      filter_empty_gt: True
+      remote:
+        s3_root_dir: ~
+        skip_local_run: False
+        queue_name: scaler-styletransfer-g2g-rgbmwir
+        prefetch: True
+        url: ann_file_train_val_overfit_1000.json
+      args:
+        generate_overfit: True
+        read_from_file:
+          read: True
+          path_name: ann_file_train_val_overfit_1000.json
+        to_serialize:
+          save: True
+          path_name: ann_file_train_val_overfit_1000.json
+        max_frame_size: 32
+        filter_empty_gt: True
+        data_root: '.'
+        workflow: ~
+      dataview_cfg:
+        queries:
+          dataset_name: Style_Transfer
+          version_name: version_2_rgb_train
+          weight: 1
+        name: train
+        ignore_region: [ dilemma_zone ]
+        max_num_frames: 1000 # can be used for overfitting tests
+        frame_type: rgb
+        cat_mapping: {"*": {out_of_lable: vehicle}}
+        special_cat_mapping:
+          ignore: { "*": ~ }  # Treat a gt bb as neither positive nor negative
+          ignore_region: { "*": ~ }  #{"*": 'dilemma_zone'},  # Any prediction inside should be regarded as ignored bb
+          negative: { "*": ~ }
+        predefined_label_enums: ~
+      pipeline:
+        - type: LoadImageFromFile
+          to_float32: False # if False the image returned is uint8 otherwise float32
+          color_type: color # [color, grayscale, unchanged]
+          channel_order: bgr  # if 'grayscale' channel_order doesn't matter
+        - type: LoadAnnotations
+          with_bbox: True
+#        - type: Expand
+#          mean: [109.880, 113.804, 114.335]
+#          to_rgb: True
+#          ratio_range: !!python/tuple [1, 2]
+#        - type: MinIoURandomCrop
+#          min_ious: !!python/tuple [0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
+#          min_crop_size: 0.3
+#        - type: Resize
+#          img_scale:
+##            - !!python/tuple [320, 320]
+#            - !!python/tuple [768, 576]
+#          multiscale_mode: ~ #range
+#          keep_ratio: True
+        - type: RandomFlip
+          flip_ratio: 0.5
+##        - type: PhotoMetricDistortion
+        - type: Normalize
+          mean: [109.880, 113.804, 114.335]
+          std: [48.654, 50.899, 53.007]
+          to_rgb: True
+        - type: Pad
+          size_divisor: 32
+        - type: DefaultFormatBundle
+        - type: Collect
+          keys:
+            - img
+            - gt_bboxes
+            - gt_labels
+  val:
+    type: AllegroDataset
+    CLASSES: !!python/tuple [person, vehicle, two-wheeled, out_of_lable, dilemma_zone]
+    remote:
+      s3_root_dir: ~
+      skip_local_run: False
+      queue_name: scaler-styletransfer-g2g-rgbmwir
+      prefetch: True
+      url: ann_file_train_val_overfit_1000.json
+    args:
+      generate_overfit: ~
+      read_from_file:
+        read: True
+        path_name: ann_file_train_val_overfit_1000.json
+      to_serialize:
+        save: False
+        path_name: ann_file_train_val_overfit_1000.json
+      max_frame_size: 32
+      filter_empty_gt: True
+      data_root: '.'
+      workflow: ~
+    dataview_cfg:
+      queries:
+        dataset_name: Style_Transfer
+        version_name: version_2_rgb_val
+        weight: 1
+      name: val
+      ignore_region: [ dilemma_zone ]
+      max_num_frames: ~
+      frame_type: rgb
+      cat_mapping: { "*": { out_of_lable: vehicle } } # Changing name of class as defined in the dataset to fit your models categories
+      special_cat_mapping:
+        ignore: { "*": ~ }  # Treat a gt bb as neither positive nor negative
+        ignore_region: { "*": ~ }  #{"*": 'dilemma_zone'},  # Any prediction inside should be regarded as ignored bb
+        negative: { "*": ~ }
+      predefined_label_enums: ~
+    pipeline:
+      - type: LoadImageFromFile
+        color_type: color
+      - type: MultiScaleFlipAug
+        img_scale: !!python/tuple [ 768, 576 ]
+        flip: False
+        transforms:
+          - type: Resize
+            keep_ratio: True
+          - type: RandomFlip
+          - type: Normalize
+            mean: [ 110.675, 113.167, 113.311 ]
+            std: [ 47.832, 49.947, 51.754 ]
+            to_rgb: True
+          - type: Pad
+            size_divisor: 32
+          - type: ImageToTensor
+            keys:
+              - img
+          - type: Collect
+            keys:
+              - img
+  test:
+    type: AllegroDataset
+    CLASSES: !!python/tuple [ person, vehicle, two-wheeled, out_of_lable, dilemma_zone ]
+    remote:
+      s3_root_dir: ~
+      skip_local_run: False
+      queue_name: scaler-styletransfer-g2g-rgbmwir
+      prefetch: True
+      url: ann_file_val.json
+    args:
+      read_from_file:
+        read: True
+        path_name: ann_file_val.json
+      to_serialize:
+        save: False
+        path_name: ann_file_val.json
+      max_frame_size: 32
+      filter_empty_gt: True
+      data_root: '.'
+      workflow: ~
+    dataview_cfg:
+      queries:
+        dataset_name: Style_Transfer
+        version_name: version_2_rgb_val
+        weight: 1
+      ignore_region: [ dilemma_zone ]
+      name: val
+      max_num_frames: ~
+      frame_type: rgb
+      cat_mapping: { "*": { out_of_lable: vehicle } } # Changing name of class as defined in the dataset to fit your models categories
+      special_cat_mapping:
+        ignore: { "*": ~ }  # Treat a gt bb as neither positive nor negative
+        ignore_region: { "*": ~ }  #{"*": 'dilemma_zone'},  # Any prediction inside should be regarded as ignored bb
+        negative: { "*": ~ }
+      predefined_label_enums: ~
+    pipeline:
+      - type: LoadImageFromFile
+        color_type: color
+      - type: MultiScaleFlipAug
+        img_scale: !!python/tuple [ 768, 576 ]
+        flip: False
+        transforms:
+          - type: Resize
+            keep_ratio: True
+          - type: RandomFlip
+          - type: Normalize
+            mean: [ 110.675, 113.167, 113.311 ]
+            std: [ 48.654, 50.899, 53.007 ]
+            to_rgb: True
+          - type: Pad
+            size_divisor: 32
+          - type: ImageToTensor
+            keys:
+              - img
+          - type: Collect
+            keys:
+              - img
+
+
+optimizer:
+  type: SGD
+  lr: 0.001 # start
+  momentum: 0.9
+  weight_decay: 0.0005
+
+#optimizer:
+#  type: AdamW
+#  lr: 0.0001
+#  weight_decay: 0.05
+#  paramwise_cfg:
+#    norm_decay_mult: 0.
+#    bypass_duplicate: True
+
+optimizer_config:
+  grad_clip:
+    max_norm: 35
+    norm_type: 2
+
+lr_config:
+    policy: CosineAnnealing
+    warmup: linear
+    warmup_iters: 4000
+    warmup_ratio: 0.1
+    min_lr_ratio: 1.e-5
+    warmup_by_epoch: False
+
+#lr_config:
+#  policy: step
+#  warmup: linear
+#  warmup_iters: 4000
+#  warmup_ratio: 0.0001
+#  step: [24, 28]
+
+# runtime settings
+runner:
+  type: EpochBasedRunner
+  max_epochs: 80
+
+# evaluate the model every "interval=1" epochs.
+evaluation:
+  interval: 1
+  save_best: bbox_mAP
+  rule: greater
+  metric:
+   - bbox
+  iou_thrs: ~
+  metric_items: ~
+  classwise: True
+
+find_unused_parameters: True
+auto_resume: False
+gpu_ids:
+  - 1
+
+auto_scale_lr:
+  enable: False
+  base_batch_size: 64
