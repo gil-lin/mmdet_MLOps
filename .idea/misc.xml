@@ -3,5 +3,8 @@
   <component name="Black">
     <option name="sdkName" value="Multimodal_I2I_Transfer" />
   </component>
-  <component name="ProjectRootManager" version="2" project-jdk-name="Multimodal_I2I_Transfer" project-jdk-type="Python SDK" />
+  <component name="ProjectRootManager" version="2" project-jdk-name="openmmdet" project-jdk-type="Python SDK" />
+  <component name="PyPackaging">
+    <option name="earlyReleasesAsUpgrades" value="true" />
+  </component>
 </project>
